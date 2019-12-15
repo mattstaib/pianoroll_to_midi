@@ -1,3 +1,8 @@
+# TODO:
+# - clusters only from middle part
+# - redo deletion of intro/outro
+# re-estimate entire duration without intro/outro
+# - allow to mask entire columns of pianoroll
 
 import imageio.core.util
 from IPython import get_ipython
@@ -69,16 +74,7 @@ from skimage.color import rgb2gray
 from skimage.data import astronaut
 import warnings
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    io.imsave
-
-
-def ignore_warnings(*args, **kwargs):
-    pass
-
-
-imageio.core.util._precision_warn = ignore_warnings
+warnings.filterwarnings("ignore")
 
 
 def get_video_info(filename):
@@ -92,6 +88,8 @@ def get_video_info(filename):
 
 
 def get_frames(filename, skip=False):
+    crop_top = 0.3
+    crop_bottom = 0.6
 
     home = str(Path.home())
     framePath = os.path.join(home, 'tempFrames')
@@ -109,11 +107,14 @@ def get_frames(filename, skip=False):
 
     t = time.time()
     for fIDX in tqdm.tqdm(range(0, nFrames, sr), desc='Extract frames', unit='frames'):
-        frame = vid.get_data(fIDX)
-        # crop frame
-        frame = frame[int(np.round(frame.shape[0] * .2)):int(np.round(frame.shape[0] * .6)), :, :]
-        # write frame
-        io.imsave(os.path.join(framePath, f'f{fIDX:08d}.png'), frame)
+        try:
+            frame = vid.get_data(fIDX)
+            # crop frame
+            frame = frame[int(np.round(frame.shape[0] * crop_top)):int(np.round(frame.shape[0] * crop_bottom)), :, :]
+            # write frame
+            io.imsave(os.path.join(framePath, f'f{fIDX:08d}.png'), frame)
+        except:
+            print('Error loading frame')
 
     return glob.glob(os.path.join(framePath, 'f*.png'))
 
@@ -226,6 +227,7 @@ def get_key(img, plot_on=False):
 
     k = int(img.shape[1] / 500)
     thr = 0.1
+    min_arr_fac = 20
     img_bin = closing(rgb2gray(img.copy()) > thr, square(k))
 
     # label image regions
@@ -239,13 +241,13 @@ def get_key(img, plot_on=False):
     rects = []
     for region in tqdm.tqdm(regionprops(label_image), desc='Get key properties', unit='keys'):
         # take regions with large enough areas
-        if region.area >= k * 20:
+        if region.area >= k * min_arr_fac:
             minr, minc, maxr, maxc = region.bbox
-            c0 = int((minc + maxc) / 2 - k)
-            c1 = int((minc + maxc) / 2 + k)
-            r0 = int((minr + maxr) / 2 - k)
-            r1 = int((minr + maxr) / 2 + k)
-            # c = np.median(img[r0:r1, c0:c1, :], axis=(0, 1))
+            # c0 = int((minc + maxc) / 2 - k)
+            # c1 = int((minc + maxc) / 2 + k)
+            # r0 = int((minr + maxr) / 2 - k)
+            # r1 = int((minr + maxr) / 2 + k)
+            # # c = np.median(img[r0:r1, c0:c1, :], axis=(0, 1))
             # c = np.median(img[minr:maxr, minc:maxc, :], axis=(0, 1))
             c = np.median(img[minr+1:maxr-1, minc+k:maxc-k, :], axis=(0, 1))
             if np.isnan(c).any():
@@ -291,10 +293,10 @@ def find_offset(img0, img1):
 
 def get_offset(frame_list):
     offset = []
-    i0 = int(len(frame_list) / 2 - 10)
-    i1 = int(len(frame_list) / 2 + 10)
+    i0 = int(len(frame_list) / 2 - len(frame_list) / 5)
+    i1 = int(len(frame_list) / 2 + len(frame_list) / 5)
     img1 = img_as_float(io.imread(frame_list[i0]))
-    for id in range(i0 + 1, i1):
+    for id in tqdm.tqdm(range(i0 + 1, i1), desc='Get offset'):
         img0 = img1
         img1 = img_as_float(io.imread(frame_list[id]))
 
@@ -304,8 +306,8 @@ def get_offset(frame_list):
 
 
 def create_filt_pianoroll(frame_list):
-    i0 = int(len(frame_list) / 2 - 30)
-    i1 = int(len(frame_list) / 2 + 30)
+    i0 = int(len(frame_list) / 2 - len(frame_list) / 5)
+    i1 = int(len(frame_list) / 2 + len(frame_list) / 5)
     off = get_offset(frame_list)
     rgb_med = get_median(frame_list[i0:i1])
 
@@ -461,6 +463,7 @@ def check_inconsistency(keys, plot_on=False):
 
 
 def remove_intro_outro(pianoroll):
+    print('Remove intro/outro')
     mc = np.empty([pianoroll.shape[0], pianoroll.shape[2]])
     for c in range(0, pianoroll.shape[2]):
         for r in range(0, pianoroll.shape[0]):
@@ -500,7 +503,7 @@ if __name__ == '__main__':
     video_list = glob.glob(video_path)
 
     for song in video_list:
-        print(os.path.basename(song))
+        print('\n' + os.path.basename(song) + '\n')
 
         pianoroll_filename = os.path.join('pianoroll', os.path.basename(song).replace(f'.{ext}', '.png'))
         midi_filename = os.path.join('midi', os.path.basename(song).replace(f'.{ext}', '.midi'))
@@ -517,7 +520,7 @@ if __name__ == '__main__':
             io.imsave(pianoroll_filename, pianoroll_uint8)  # write frame
         else:
             print('Pianoroll exists. Loading...')
-            PIL.Image.MAX_IMAGE_PIXELS = 933120000
+            PIL.Image.MAX_IMAGE_PIXELS = 10**9
             pianoroll = img_as_float(io.imread(pianoroll_filename))
 
         vid, info, frameRate, Duration, nFrames, sr = get_video_info(song)
@@ -525,9 +528,12 @@ if __name__ == '__main__':
 
         pianoroll = remove_intro_outro(pianoroll)
 
-        key_pos, is_white, wkey_width, bkey_width, key_idx = calc_keys(pianoroll.shape)
-        key_col, key_loc, key_width, key_start, key_end = get_key(pianoroll)
-        color_cluster = cluster_key_col(key_col, method='dpgmm3d', n_components=5, plot_on=False)
+        try:
+            key_pos, is_white, wkey_width, bkey_width, key_idx = calc_keys(pianoroll.shape)
+            key_col, key_loc, key_width, key_start, key_end = get_key(pianoroll)
+            color_cluster = cluster_key_col(key_col, method='dpgmm3d', n_components=5, plot_on=False)
+        except:
+            continue
 
         # plt.hist(key_width)
         # plt.show()
@@ -568,4 +574,7 @@ if __name__ == '__main__':
 
         keys = check_inconsistency(keys)
 
-        write_midi(keys, midi_filename)
+        try:
+            write_midi(keys, midi_filename)
+        except:
+            None
